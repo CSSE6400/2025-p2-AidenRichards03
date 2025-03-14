@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from todo.models import db
 from todo.models.todo import Todo
-from datetime import datetime
+from datetime import datetime, timedelta
  
 api = Blueprint('api', __name__, url_prefix='/api/v1') 
 
@@ -23,7 +23,21 @@ def health():
 
 @api.route('/todos', methods=['GET'])
 def get_todos():
-    todos = Todo.query.all()
+    args = request.args
+    completed = args.get('completed')
+    window = args.get('window')
+
+    if window is not None and completed is not None:
+        max_date = datetime.now() + timedelta(days=int(window))
+        todos = Todo.query.filter(Todo.deadline_at <= max_date, Todo.completed.startswith(completed)).all()
+    elif completed is not None:
+        completed_bool = bool(completed.upper())
+        todos = Todo.query.filter(Todo.completed == completed_bool).all()
+    elif window is not None:
+        max_date = datetime.now() + timedelta(days=int(window))
+        todos = Todo.query.filter(Todo.deadline_at <= max_date).all()
+    else:
+        todos = Todo.query.all()
     result = []
     for todo in todos:
         result.append(todo.to_dict())
@@ -38,6 +52,18 @@ def get_todo(todo_id):
 
 @api.route('/todos', methods=['POST'])
 def create_todo():
+
+    REQUIRED_KEYS = {'title'}    
+    VALID_KEYS = {'title', 'description', 'completed', 'deadline_at', 'created_at', 'updated_at'}
+    data = request.get_json()
+    extra_fields = set(data.keys()) - VALID_KEYS
+    missing_fields = REQUIRED_KEYS - set(data.keys())
+
+    if len(missing_fields) > 0:
+        return jsonify({'error': 'Missing JSON'}), 400
+    
+    if len(extra_fields) > 0:
+        return jsonify({'error': f'Unexpected fields: {extra_fields}'}), 400
     todo = Todo(
     title=request.json.get('title'),
     description=request.json.get('description'),
@@ -58,6 +84,10 @@ def update_todo(todo_id):
     todo = Todo.query.get(todo_id)
     if todo is None:
         return jsonify({'error': 'Todo not found'}), 404
+    valid_keys = {'title', 'description', 'completed', 'deadline_at'}
+    extra_fields = set(request.json.keys()) - valid_keys
+    if len(extra_fields) > 0:
+        return jsonify({'error': f'Unexpected fields: {extra_fields}'}), 400
     todo.title = request.json.get('title', todo.title)
     todo.description = request.json.get('description', todo.description)
     todo.completed = request.json.get('completed', todo.completed)
